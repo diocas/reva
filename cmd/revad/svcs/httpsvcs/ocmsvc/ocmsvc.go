@@ -23,7 +23,6 @@ import (
 
 	"github.com/cs3org/reva/cmd/revad/httpserver"
 	"github.com/cs3org/reva/cmd/revad/svcs/httpsvcs"
-	"github.com/cs3org/reva/pkg/appctx"
 	"github.com/mitchellh/mapstructure"
 )
 
@@ -33,10 +32,14 @@ func init() {
 
 type config struct {
 	Prefix string `mapstructure:"prefix"`
+	Host   string `mapstructure:"public_host"`
+	Webdav string `mapstructure:"webdav_endoint"`
 }
 
 type svc struct {
-	prefix string
+	prefix          string
+	ProviderHandler *ProviderHandler
+	SharesHandler   *SharesHandler
 }
 
 // New  returns a service with the OCM implementation
@@ -50,7 +53,17 @@ func New(m map[string]interface{}) (httpsvcs.Service, error) {
 		conf.Prefix = "ocm"
 	}
 
-	return &svc{prefix: conf.Prefix}, nil
+	if conf.Host == "" {
+		conf.Host = "http://localhost"
+	}
+
+	service := &svc{
+		prefix:          conf.Prefix,
+		ProviderHandler: NewProviderHandler(conf.Host, conf.Prefix, conf.Webdav),
+		SharesHandler:   new(SharesHandler),
+	}
+
+	return service, nil
 }
 
 func (s *svc) Close() error {
@@ -63,9 +76,15 @@ func (s *svc) Prefix() string {
 
 func (s *svc) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		log := appctx.GetLogger(r.Context())
-		if _, err := w.Write([]byte("welcome to ocm")); err != nil {
-			log.Err(err).Msg("error writing response")
+		var head string
+		head, r.URL.Path = httpsvcs.ShiftPath(r.URL.Path)
+		switch head {
+		case "ocm-provider":
+			s.ProviderHandler.ServeHTTP(w, r)
+		case "shares":
+			s.SharesHandler.ServeHTTP(w, r)
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
 	})
 }
